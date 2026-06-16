@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Mapa de Asia – Reconocimiento de Voz</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+ 
+    body {
+      background: #0f172a;
+      color: #e2e8f0;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+ 
+    h1 {
+      font-size: 1.6rem;
+      letter-spacing: 0.05em;
+      margin-bottom: 16px;
+      color: #7dd3fc;
+    }
+ 
+    #controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+ 
+    button {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      font-weight: 600;
+      transition: all 0.2s;
+    }
+ 
+    #btnStart  { background: #22c55e; color: #fff; }
+    #btnStart:hover  { background: #16a34a; }
+    #btnStart:disabled { background: #4b5563; cursor: not-allowed; }
+ 
+    #btnStop   { background: #ef4444; color: #fff; }
+    #btnStop:hover   { background: #dc2626; }
+    #btnStop:disabled  { background: #4b5563; cursor: not-allowed; }
+ 
+    #btnReset  { background: #6366f1; color: #fff; }
+    #btnReset:hover  { background: #4f46e5; }
+ 
+    #status {
+      font-size: 0.95rem;
+      margin-bottom: 10px;
+      min-height: 24px;
+      color: #94a3b8;
+      text-align: center;
+    }
+ 
+    #transcript-box {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      color: #cbd5e1;
+      margin-bottom: 14px;
+      width: 100%;
+      max-width: 960px;
+      min-height: 36px;
+      text-align: center;
+    }
+    #transcript-box .hl { color: #4ade80; font-weight: bold; }
+ 
+    #map-container {
+      width: 100%;
+      max-width: 960px;
+      background: #1e293b;
+      border-radius: 12px;
+      border: 1px solid #334155;
+      overflow: hidden;
+    }
+    #map-container svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+    #map-container svg path {
+      fill: white;
+      stroke: #555;
+      stroke-width: 0.6px;
+      stroke-linejoin: round;
+      transition: fill 0.5s ease;
+    }
+    #map-container svg path.active { fill: #22c55e !important; }
+ 
+    .country-label {
+      font-size: 11px;
+      font-weight: 700;
+      fill: #052e16;
+      pointer-events: none;
+      text-anchor: middle;
+      dominant-baseline: middle;
+      paint-order: stroke;
+      stroke: white;
+      stroke-width: 3px;
+    }
+ 
+    #detected-list {
+      margin-top: 12px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+      text-align: center;
+      max-width: 960px;
+    }
+    #detected-list strong { color: #4ade80; }
+ 
+    @keyframes flashGreen {
+      0%   { fill: #fde047; }
+      40%  { fill: #86efac; }
+      100% { fill: #22c55e; }
+    }
+    .flash { animation: flashGreen 0.6s ease-out forwards; }
+  </style>
+</head>
+<body>
+ 
+<h1>🌏 Mapa de Asia – Reconocimiento de Voz</h1>
+ 
+<div id="controls">
+  <button id="btnStart">🎙️ Iniciar micrófono</button>
+  <button id="btnStop" disabled>⏹ Detener</button>
+  <button id="btnReset">🔄 Reiniciar mapa</button>
+</div>
+ 
+<div id="status">Listo. Pulsa "Iniciar micrófono" para empezar.</div>
+<div id="transcript-box">…</div>
+ 
+<div id="map-container"></div>
+ 
+<div id="detected-list">Países detectados: <strong id="detected-names">ninguno</strong></div>
+ 
+<script>
+// ═══════════════════════════════════════════════════════════
+//  MAPA DE PAÍSES
+//  idx → { label, lx, ly, group, words[] }
+//  group: países que comparten paths (Rusia, Indonesia)
+//         se activan todos los paths del grupo a la vez
+//  words: variantes en español (con y sin tilde) + inglés
+// ═══════════════════════════════════════════════════════════
+const COUNTRIES = {
+   0: { label:"Sri Lanka",        lx:420,  ly:1200, group:"srilanka",
+        words:["sri lanka","ceilán","ceilan"] },
+   1: { label:"Indonesia",        lx:1323, ly:1190, group:"indonesia",
+        words:[] },
+   2: { label:"Kazajistán",       lx:650,  ly:713,  group:"kazajistan",
+        words:["kazajistán","kazajstan","kazajstán","kazakistán","kazajistan","kazajstan","kazajstan"] },
+   3: { label:"Bangladesh",       lx:487,  ly:1048, group:null,
+        words:["bangladesh"] },
+   4: { label:"Pakistán",         lx:577,  ly:800,  group:null,
+        words:["pakistán","pakistan","paquistán","paquistan"] },
+   5: { label:"Rusia",            lx:185,  ly:765,  group:"rusia",
+        words:[] },
+   6: { label:"Timor Oriental",   lx:1644, ly:1594, group:null,
+        words:["timor oriental","timor-leste","timor leste","timor"] },
+   7: { label:"Filipinas",        lx:1254, ly:1237, group:null,
+        words:["filipinas","philippines"] },
+   8: { label:"Nepal",            lx:770,  ly:778,  group:null,
+        words:["nepal"] },
+   9: { label:"Palaos",           lx:1555, ly:1058, group:null,
+        words:["palaos","palau"] },
+  10: { label:"Georgia",          lx:246,  ly:850,  group:null,
+        words:["georgia"] },
+  11: { label:"And. y Nicobares", lx:920,  ly:1323, group:null,
+        words:["islas andamán","andamán","andaman","andaman y nicobar","andamán y nicobares"] },
+  12: { label:"Japón",            lx:1690, ly:828,  group:null,
+        words:["japón","japon","japan"] },
+  13: { label:"Singapur",         lx:1292, ly:1429, group:null,
+        words:["singapur","singapore"] },
+  14: { label:"Irán",             lx:344,  ly:1043, group:null,
+        words:["irán","iran","persia"] },
+  15: { label:"Baréin",           lx:442,  ly:1027, group:null,
+        words:["baréin","barein","bahréin","bahrein","bahrain"] },
+  16: { label:"Indonesia",        lx:1582, ly:1238, group:"indonesia",
+        words:[] },
+  17: { label:"Afganistán",       lx:729,  ly:931,  group:null,
+        words:["afganistán","afganistan","afghanistan"] },
+  18: { label:"Omán",             lx:518,  ly:1094, group:null,
+        words:["omán","oman"] },
+  19: { label:"Corea del Norte",  lx:1574, ly:740,  group:null,
+        words:["corea del norte","corea norte","norte de corea","corea norte"] },
+  20: { label:"Kirguistán",       lx:973,  ly:972,  group:null,
+        words:["kirguistán","kirguistan","kirguizistán","kirguizistan","kyrgyzstan","kirguizia"] },
+  21: { label:"Mongolia",         lx:1292, ly:586,  group:null,
+        words:["mongolia"] },
+  22: { label:"Maldivas",         lx:801,  ly:1390, group:null,
+        words:["maldivas","maldives"] },
+  23: { label:"Malasia",          lx:1383, ly:1384, group:null,
+        words:["malasia","malaysia","malaya"] },
+  24: { label:"Armenia",          lx:194,  ly:869,  group:null,
+        words:["armenia"] },
+  25: { label:"Myanmar",          lx:1293, ly:1151, group:null,
+        words:["myanmar","birmania","burma"] },
+  26: { label:"Bután",            lx:822,  ly:718,  group:null,
+        words:["bután","butan","bhutan","bhután"] },
+  27: { label:"Azerbaiyán",       lx:382,  ly:955,  group:null,
+        words:["azerbaiyán","azerbaiyan","azerbayan","azerbaijan"] },
+  28: { label:"Rusia",            lx:697,  ly:552,  group:"rusia",
+        words:[] },
+  29: { label:"Chipre",           lx:215,  ly:918,  group:null,
+        words:["chipre","cyprus"] },
+  30: { label:"Rusia",            lx:1791, ly:835,  group:"rusia",
+        words:[] },
+  31: { label:"Líbano",           lx:182,  ly:915,  group:null,
+        words:["líbano","libano","lebanon"] },
+  32: { label:"Israel",           lx:179,  ly:977,  group:null,
+        words:["israel"] },
+  33: { label:"Turquía",          lx:320,  ly:880,  group:"turquia",
+        words:["turquía","turquia","turkey","turkiye","türkiye"] },
+  34: { label:"Irak",             lx:482,  ly:891,  group:null,
+        words:["irak","iraq"] },
+  35: { label:"Indonesia",        lx:1522, ly:1492, group:"indonesia",
+        words:["indonesia"] },
+  36: { label:"Tailandia",        lx:952,  ly:1089, group:null,
+        words:["tailandia","thailand","siam"] },
+  37: { label:"Turquía",          lx:315,  ly:695,  group:"turquia",
+        words:[] },
+  38: { label:"China",            lx:1298, ly:787,  group:null,
+        words:["china","república popular china","república popular de china"] },
+  39: { label:"Camboya",          lx:1310, ly:1246, group:null,
+        words:["camboya","cambodia","kampuchea"] },
+  40: { label:"Laos",             lx:1176, ly:1130, group:null,
+        words:["laos"] },
+  41: { label:"Papúa N.G.",       lx:1467, ly:1378, group:null,
+        words:["papúa nueva guinea","papua nueva guinea","papua","papúa"] },
+  42: { label:"",                 lx:0,    ly:0,    group:null,
+        words:[] }, // Bután pieza pequeña — sin etiqueta
+  43: { label:"Vietnam",          lx:1074, ly:1056, group:null,
+        words:["vietnam","viet nam","viet-nam"] },
+  44: { label:"Catar",            lx:431,  ly:1015, group:null,
+        words:["catar","qatar","katar"] },
+  45: { label:"Uzbekistán",       lx:384,  ly:742,  group:null,
+        words:["uzbekistán","uzbekistan","uzbekistan"] },
+  46: { label:"Tayikistán",       lx:342,  ly:743,  group:null,
+        words:["tayikistán","tayikistan","tajikistán","tajikistan","tayikistán"] },
+  47: { label:"Arabia Saudita",   lx:708,  ly:966,  group:null,
+        words:["arabia saudita","arabia saudi","arabia saudí","saudi arabia","arabia saudita"] },
+  48: { label:"",                 lx:0,    ly:0,    group:null,
+        words:[] }, // Contorno general — ignorar
+};
+ 
+// ── Índices que son la "fuente de verdad" de cada grupo ──────────────────────
+// Cuando se activa un grupo, se colorean todos los paths del grupo
+// pero el label solo aparece en el representante principal
+const GROUP_REPRESENTATIVES = {
+  rusia:      5,   // etiqueta de Rusia en path 5 (europeo)
+  indonesia:  35,  // etiqueta en el path de Java/Sumatra
+  kazajistan: 2,
+  turquia:    33,
+};
+ 
+// ── Construir índice palabra→[paths] ────────────────────────────────────────
+// Incluimos variantes sin tilde para tolerancia
+function sinTilde(s) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+ 
+const WORD_TO_PATHS = {}; // keyword → Set de indices de paths
+ 
+for (const [idx, data] of Object.entries(COUNTRIES)) {
+  if (!data.words.length) continue;
+  for (const w of data.words) {
+    const key = w.toLowerCase();
+    const keyNoTilde = sinTilde(key);
+    for (const variant of [key, keyNoTilde]) {
+      if (!WORD_TO_PATHS[variant]) WORD_TO_PATHS[variant] = new Set();
+      WORD_TO_PATHS[variant].add(parseInt(idx));
+    }
+  }
+}
+ 
+// Si un path tiene grupo, añadir todos los paths del grupo como targets
+function getGroupPaths(startIdx) {
+  const g = COUNTRIES[startIdx]?.group;
+  if (!g) return [startIdx];
+  return Object.entries(COUNTRIES)
+    .filter(([, d]) => d.group === g)
+    .map(([i]) => parseInt(i));
+}
+ 
+// ── Estado ───────────────────────────────────────────────────────────────────
+const activated = new Set(); // paths ya verdes
+let svgEl = null;
+ 
+// ── Audio "ding" ─────────────────────────────────────────────────────────────
+function playDing() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [[880, 1100, 0, 0.0], [1320, 1760, 0.07, 0.05]].forEach(([f0, f1, delay, start]) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.setValueAtTime(f0, ctx.currentTime + delay);
+      o.frequency.exponentialRampToValueAtTime(f1, ctx.currentTime + delay + 0.15);
+      g.gain.setValueAtTime(0.35, ctx.currentTime + delay);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.8);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + start);
+      o.stop(ctx.currentTime + delay + 0.8);
+    });
+  } catch(e) {}
+}
+ 
+// ── Activar paths ────────────────────────────────────────────────────────────
+function activatePaths(pathIndices) {
+  if (!svgEl) return;
+  let anyNew = false;
+ 
+  for (const idx of pathIndices) {
+    if (activated.has(idx)) continue;
+    activated.add(idx);
+    anyNew = true;
+    const path = svgEl.querySelector(`#country-${idx}`);
+    if (!path) continue;
+    path.classList.remove("flash");
+    void path.offsetWidth;
+    path.classList.add("active", "flash");
+ 
+    const data = COUNTRIES[idx];
+    if (!data?.label) continue;
+    // ¿Es el representante de su grupo o un path individual?
+    const g = data.group;
+    const rep = g ? GROUP_REPRESENTATIVES[g] : parseInt(idx);
+    if (parseInt(idx) !== rep) continue; // solo el representante pone etiqueta
+ 
+    const txt = document.createElementNS("http://www.w3.org/2000/svg","text");
+    txt.setAttribute("x", data.lx);
+    txt.setAttribute("y", data.ly);
+    txt.setAttribute("class","country-label");
+    txt.setAttribute("id", `lbl-${idx}`);
+    txt.textContent = data.label;
+    svgEl.appendChild(txt);
+  }
+  return anyNew;
+}
+ 
+function updateDetectedList() {
+  const shown = new Set();
+  const names = [];
+  for (const idx of activated) {
+    const g = COUNTRIES[idx]?.group;
+    const key = g ?? `_${idx}`;
+    if (shown.has(key)) continue;
+    shown.add(key);
+    const lbl = COUNTRIES[idx]?.label;
+    if (lbl) names.push(lbl);
+  }
+  names.sort();
+  document.getElementById("detected-names").textContent = names.length ? names.join(", ") : "ninguno";
+}
+ 
+// ── Analizar transcripción ───────────────────────────────────────────────────
+function analyzeText(raw) {
+  const text = raw.toLowerCase();
+  const textNoTilde = sinTilde(text);
+ 
+  let foundAny = false;
+  let htmlOut = raw;
+ 
+  // Ordenar keywords por longitud desc para que "corea del norte" gane sobre "corea"
+  const keys = Object.keys(WORD_TO_PATHS).sort((a,b) => b.length - a.length);
+ 
+  for (const kw of keys) {
+    const kwNoTilde = sinTilde(kw);
+    // Buscar en texto original y en texto sin tilde
+    if (!text.includes(kw) && !textNoTilde.includes(kwNoTilde)) continue;
+ 
+    const pathIndices = [...WORD_TO_PATHS[kw]];
+    const allPaths = [...new Set(pathIndices.flatMap(i => getGroupPaths(i)))];
+    const anyNew = activatePaths(allPaths);
+ 
+    if (anyNew) {
+      foundAny = true;
+      playDing();
+      // Etiqueta visual con el nombre oficial
+      const label = COUNTRIES[allPaths[0]]?.label || kw;
+      document.getElementById("status").textContent = `✅ ¡Detectado: ${label}!`;
+ 
+      // Resaltar en el transcript (buscar la versión con o sin tilde en el texto original)
+      const re = new RegExp(kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      htmlOut = htmlOut.replace(re, m => `<span class="hl">${m}</span>`);
+    }
+  }
+ 
+  document.getElementById("transcript-box").innerHTML = htmlOut || "…";
+  if (foundAny) updateDetectedList();
+}
+ 
+// ── Reiniciar ────────────────────────────────────────────────────────────────
+function resetMap() {
+  activated.clear();
+  if (svgEl) {
+    svgEl.querySelectorAll("path").forEach(p => p.classList.remove("active","flash"));
+    svgEl.querySelectorAll(".country-label").forEach(l => l.remove());
+  }
+  document.getElementById("transcript-box").innerHTML = "…";
+  document.getElementById("status").textContent = "Mapa reiniciado.";
+  updateDetectedList();
+}
+ 
+// ── Cargar SVG ───────────────────────────────────────────────────────────────
+async function loadMap() {
+  const res = await fetch("/asia_ids.svg");
+  const txt = await res.text();
+  const container = document.getElementById("map-container");
+  container.innerHTML = txt;
+  svgEl = container.querySelector("svg");
+  svgEl.removeAttribute("width");
+  svgEl.removeAttribute("height");
+  svgEl.style.width = "100%";
+  svgEl.style.height = "auto";
+}
+ 
+// ── Web Speech API ───────────────────────────────────────────────────────────
+let recognition = null;
+ 
+function initRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    document.getElementById("status").textContent = "❌ Tu navegador no soporta reconocimiento de voz. Usa Chrome.";
+    document.getElementById("btnStart").disabled = true;
+    return;
+  }
+  recognition = new SR();
+  recognition.lang = "es-ES";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 5;
+ 
+  recognition.onstart = () => {
+    document.getElementById("status").textContent = "🎙️ Escuchando… Di el nombre de un país de Asia.";
+    document.getElementById("btnStart").disabled = true;
+    document.getElementById("btnStop").disabled = false;
+  };
+  recognition.onend = () => {
+    document.getElementById("btnStart").disabled = false;
+    document.getElementById("btnStop").disabled = true;
+  };
+  recognition.onerror = (e) => {
+    document.getElementById("status").textContent = `⚠️ Error: ${e.error}`;
+    document.getElementById("btnStart").disabled = false;
+    document.getElementById("btnStop").disabled = true;
+  };
+  recognition.onresult = (ev) => {
+    for (let i = ev.resultIndex; i < ev.results.length; i++) {
+      const res = ev.results[i];
+      for (let a = 0; a < res.length; a++) {
+        analyzeText(res[a].transcript);
+      }
+    }
+  };
+}
+ 
+document.getElementById("btnStart").addEventListener("click", () => {
+  if (!recognition) initRecognition();
+  if (recognition) recognition.start();
+});
+document.getElementById("btnStop").addEventListener("click", () => {
+  if (recognition) recognition.stop();
+});
+document.getElementById("btnReset").addEventListener("click", resetMap);
+ 
+loadMap();
+</script>
+</body>
+</html>
